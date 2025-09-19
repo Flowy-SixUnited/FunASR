@@ -1,8 +1,24 @@
 #ifndef AUDIO_H
 #define AUDIO_H
 
+// #include <thread>
+// using std::thread;
+// #include <mutex>
+// using std::mutex;
+// #include <iostream>
+// using std::cout;
+// using std::endl;
+// #include <queue>
+// using std::queue;
+// #include <string>
+// using std::string;
+// using std::to_string;
+// #include <functional>
+// using std::ref;
+
 #include <queue>
 #include <stdint.h>
+#include <mutex>
 #include "vad-model.h"
 #include "offline-stream.h"
 #include "com-define.h"
@@ -13,6 +29,38 @@
 
 using namespace std;
 namespace funasr {
+  
+  // template <typename T>
+  // class BlockingQueue {
+  // private:
+  //     mutex mutex_;
+  //     queue<T> queue_;
+  // public:
+  //     T pop() {
+  //       this->mutex_.lock();
+  //       T value;
+  //       if( !this->queue_.empty() )
+  //       {
+  //           value = this->queue_.front();
+  //           this->queue_.pop();
+  //       }
+  //       this->mutex_.unlock();
+  //       return value;
+  //     }
+  
+  //     void push(T value) {
+  //         this->mutex_.lock();
+  //         this->queue_.push(value);
+  //         this->mutex_.unlock();
+  //     }
+  
+  //     bool empty() {
+  //         this->mutex_.lock();
+  //         bool check = this->queue_.empty();
+  //         this->mutex_.unlock();
+  //         return check;
+  //     }
+  // };
 
 class AudioFrame {
   private:
@@ -58,10 +106,14 @@ class DLLAPI Audio {
     int speech_align_len;
     float align_size;
     int data_type;
+
     queue<AudioFrame *> frame_queue;
     queue<AudioFrame *> asr_online_queue;
     queue<AudioFrame *> asr_offline_queue;
     int dest_sample_rate;
+    std::mutex frame_queue_mutex;
+    std::mutex asr_online_queue_mutex;
+    std::mutex asr_offline_queue_mutex;
   public:
     Audio(int data_type);
     Audio(int model_sample_rate,int data_type);
