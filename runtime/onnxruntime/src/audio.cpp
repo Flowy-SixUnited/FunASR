@@ -1281,12 +1281,12 @@ void Audio::Split(VadModel* vad_obj, vector<std::vector<int>>& vad_segments, boo
 void Audio::Split(VadModel* vad_obj, int chunk_len, bool input_finished, ASR_TYPE asr_mode)
 {
     AudioFrame *frame;
-
+    int sp_len = 0;
     {
         std::lock_guard<std::mutex> lockGurad(frame_queue_mutex);
         frame = frame_queue.front();
         frame_queue.pop();
-        int sp_len = frame->GetLen();
+        sp_len = frame->GetLen();
         delete frame;
         frame = nullptr;
     }
