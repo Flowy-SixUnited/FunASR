@@ -57,6 +57,7 @@ typedef struct {
   std::shared_ptr<std::vector<std::vector<std::string>>> punc_cache;
   std::shared_ptr<std::vector<std::vector<float>>> hotwords_embedding=nullptr;
   std::shared_ptr<websocketpp::lib::mutex> thread_lock; // lock for each connection
+  FUNASR_HANDLE tpass_handle=nullptr;
   FUNASR_HANDLE tpass_online_handle=nullptr;
   std::string online_res = "";
   std::string tpass_res = "";
@@ -124,6 +125,7 @@ class WebSocketServer {
                   bool itn,
                   int audio_fs,
                   std::string wav_format,
+                  FUNASR_HANDLE& tpass_handle,
                   FUNASR_HANDLE& tpass_online_handle,
                   FUNASR_DEC_HANDLE& decoder_handle,
                   std::string svs_lang,
@@ -141,7 +143,8 @@ class WebSocketServer {
   asio::io_context& io_decoder_;  // threads for asr decoder
   // std::ofstream fout;
   // FUNASR_HANDLE asr_handle;  // asr engine handle
-  FUNASR_HANDLE tpass_handle=nullptr;
+  std::map<std::string, std::string> model_path_;
+  int thread_num_;
   bool isonline = true;  // online or offline engine, now only support offline
   bool is_ssl = true;
   server* server_;          // websocket server

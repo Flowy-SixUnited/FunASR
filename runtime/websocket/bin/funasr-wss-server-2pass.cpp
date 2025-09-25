@@ -4,23 +4,25 @@
  */
 /* 2022-2023 by zhaomingwork */
 #ifdef ASR_SERVER_DLL_EXPORTS
-#define ASR_SERVER_DLL_EXPORTS __declspec(dllexport)  // ±àÒë DLL Ê±µ¼³ö
+    #define ASR_SERVER_DLL_EXPORTS __declspec(dllexport)  // ç¼–è¯‘ DLL æ—¶å¯¼å‡º
 #else
-#define ASR_SERVER_DLL_EXPORTS __declspec(dllimport)  // Ê¹ÓÃ DLL Ê±µ¼Èë
+    #define ASR_SERVER_DLL_EXPORTS __declspec(dllimport)  // ä½¿ç”¨ DLL æ—¶å¯¼å…¥
 #endif
 
 #include "websocket-server-2pass.h"
 #ifdef _WIN32
-#include "win_func.h"
-#include <windows.h>
-#include <stringapiset.h>
-#include <filesystem>
-#include <thread>
-#include <functional>
+    #include "win_func.h"
+    #include <windows.h>
+    #include <stringapiset.h>
+    #include <filesystem>
+    #include <thread>
+    #include <functional>
 #else
-#include <unistd.h>
+    #include <unistd.h>
 #endif
 #include <fstream>
+#include <atomic>
+#include <mutex>
 #include "util.h"
 
 
@@ -36,7 +38,8 @@ using namespace std;
 //static std::thread decodeThread;
 static asio::io_context io_decoder;  // context for decoding
 static asio::io_context io_server;   // context for server
-static bool isRunning = false;
+static std::mutex io_context_mutex;  // ä¿æŠ¤io_contextçš„è®¿é—®
+static std::atomic<bool> isRunning{false};  // ä½¿ç”¨åŸå­å˜é‡
 
 
 
@@ -76,29 +79,29 @@ extern __declspec(dllexport) void  swAsrServerStart(
       //std::string model_dir_str, online_model_dir_str, quantize_str, vad_dir_str,
       //    vad_quant_str, punc_dir_str, punc_quant_str, port_id_str;
 
-      // ÔÚWindowsÉÏ×ª»»UTF-8Â·¾¶Îª±¾µØ±àÂë£¬ÒÔ±ãµ×²ã¿âÕıÈ·´¦Àí
+      // åœ¨Windowsä¸Šè½¬æ¢UTF-8è·¯å¾„ä¸ºæœ¬åœ°ç¼–ç ï¼Œä»¥ä¾¿åº•å±‚åº“æ­£ç¡®å¤„ç†
       auto convertUtf8ToLocal = [](const char* utf8_str) -> std::string {
 
           try {
-              // ÏÈ×ª»»Îª¿í×Ö·û
+              // å…ˆè½¬æ¢ä¸ºå®½å­—ç¬¦
               int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, NULL, 0);
               if (wlen == 0) {
                   //spdlog::error("Failed to convert UTF-8 to wide char: {}", utf8_str);
-                  return utf8_str; // »ØÍËµ½Ô­Ê¼×Ö·û´®
+                  return utf8_str; // å›é€€åˆ°åŸå§‹å­—ç¬¦ä¸²
               }
               std::wstring wstr(wlen, 0);
               MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, &wstr[0], wlen);
 
-              // ÔÙ×ª»»Îª±¾µØANSI±àÂë£¨CP_ACP£©
+              // å†è½¬æ¢ä¸ºæœ¬åœ°ANSIç¼–ç ï¼ˆCP_ACPï¼‰
               int len = WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, NULL, 0, NULL, NULL);
               if (len == 0) {
                  // spdlog::error("Failed to convert wide char to ANSI: {}", utf8_str);
-                  return utf8_str; // »ØÍËµ½Ô­Ê¼×Ö·û´®
+                  return utf8_str; // å›é€€åˆ°åŸå§‹å­—ç¬¦ä¸²
               }
               std::string result(len, 0);
               WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, &result[0], len, NULL, NULL);
 
-              // ÒÆ³ıÄ©Î²µÄnull×Ö·û
+              // ç§»é™¤æœ«å°¾çš„nullå­—ç¬¦
               if (!result.empty() && result.back() == '\0') {
                   result.pop_back();
               }
@@ -107,7 +110,7 @@ extern __declspec(dllexport) void  swAsrServerStart(
           }
           catch (const std::exception& e) {
               //spdlog::error("Exception during path conversion: {}", e.what());
-              return utf8_str; // »ØÍËµ½Ô­Ê¼×Ö·û´®
+              return utf8_str; // å›é€€åˆ°åŸå§‹å­—ç¬¦ä¸²
           }
 
           };
@@ -147,23 +150,23 @@ extern __declspec(dllexport) void  swAsrServerStart(
 
       //spdlog::info("Parameter processing completed successfully");
 
-      // ¼ÇÂ¼×ª»»ºóµÄÂ·¾¶ÓÃÓÚµ÷ÊÔ
+      // è®°å½•è½¬æ¢åçš„è·¯å¾„ç”¨äºè°ƒè¯•
      // spdlog::info("Converted paths for ASR server:");
       //spdlog::info("  - Model dir: '{}'", model_dir_str);
       //spdlog::info("  - Online model dir: '{}'", online_model_dir_str);
       //spdlog::info("  - VAD dir: '{}'", vad_dir_str);
       //spdlog::info("  - Punctuation dir: '{}'", punc_dir_str);
 
-      // ¼ì²éÎÄ¼şÊÇ·ñ´æÔÚ
+      // æ£€æŸ¥æ–‡ä»¶æ˜¯å¦å­˜åœ¨
      // spdlog::info("Validating model paths...");
 
       bool pathsValid = true;
 
-      // ÔÚWindowsÉÏÊ¹ÓÃUTF-8µ½¿í×Ö·ûµÄ×ª»»À´ÕıÈ·´¦ÀíÖĞÎÄÂ·¾¶
+      // åœ¨Windowsä¸Šä½¿ç”¨UTF-8åˆ°å®½å­—ç¬¦çš„è½¬æ¢æ¥æ­£ç¡®å¤„ç†ä¸­æ–‡è·¯å¾„
       auto checkPathExists = [&](const std::string& path_str, const std::string& name) -> bool {
           try {
 #ifdef _WIN32
-              // ½«UTF-8×Ö·û´®×ª»»Îª¿í×Ö·û
+              // å°†UTF-8å­—ç¬¦ä¸²è½¬æ¢ä¸ºå®½å­—ç¬¦
               int wlen = MultiByteToWideChar(CP_UTF8, 0, path_str.c_str(), -1, NULL, 0);
               if (wlen == 0) {
                  // spdlog::error("Failed to convert {} path to wide char", name);
@@ -172,7 +175,7 @@ extern __declspec(dllexport) void  swAsrServerStart(
               std::wstring wpath(wlen, 0);
               MultiByteToWideChar(CP_UTF8, 0, path_str.c_str(), -1, &wpath[0], wlen);
 
-              // Ê¹ÓÃ¿í×Ö·ûÂ·¾¶¼ì²é´æÔÚĞÔ
+              // ä½¿ç”¨å®½å­—ç¬¦è·¯å¾„æ£€æŸ¥å­˜åœ¨æ€§
               std::filesystem::path fs_path(wpath);
               bool exists = std::filesystem::exists(fs_path);
              // spdlog::info("{} path '{}' exists: {}", name, path_str, exists);
@@ -196,13 +199,13 @@ extern __declspec(dllexport) void  swAsrServerStart(
           }
           };
 
-      // ¼ì²éËùÓĞÂ·¾¶£¨Ê¹ÓÃÔ­Ê¼UTF-8Â·¾¶½øĞĞÑéÖ¤£¬ÒòÎªÎÒÃÇµÄÑéÖ¤º¯ÊıÒÑ¾­´¦ÀíÁË±àÂë£©
+      // æ£€æŸ¥æ‰€æœ‰è·¯å¾„ï¼ˆä½¿ç”¨åŸå§‹UTF-8è·¯å¾„è¿›è¡ŒéªŒè¯ï¼Œå› ä¸ºæˆ‘ä»¬çš„éªŒè¯å‡½æ•°å·²ç»å¤„ç†äº†ç¼–ç ï¼‰
       pathsValid &= checkPathExists(_model_dir_str, "Model");
       pathsValid &= checkPathExists(_online_model_dir_str, "Online model");
       pathsValid &= checkPathExists(_vad_dir_str, "VAD");
       pathsValid &= checkPathExists(_punc_dir_str, "Punctuation");
 
-      // ÑéÖ¤¶Ë¿ÚºÅ
+      // éªŒè¯ç«¯å£å·
       try {
          // int port = std::stoi(port_id_str);
           if (port < 1 || port > 65535) {
@@ -335,7 +338,7 @@ extern __declspec(dllexport) void  swAsrServerStart(
     {
         cp(1);
     }
-    isRunning = true;
+    isRunning.store(true);
 
     std::vector<std::thread> decoder_threads;
 
@@ -374,16 +377,14 @@ extern __declspec(dllexport) void  swAsrServerStart(
 
 extern __declspec(dllexport) void  swAsrServerStop(
 ) {
+    std::lock_guard<std::mutex> lock(io_context_mutex);
     if (!io_decoder.stopped()) {
-
         io_decoder.stop();
     }
     if (!io_server.stopped()) {
-
         io_server.stop();
     }
-
-    isRunning = false;
+    isRunning.store(false);
 }
 
 
@@ -391,7 +392,7 @@ extern __declspec(dllexport) int swAsrIsServerRunning() {
    // bool isRunning = (!io_decoder.stopped()) && (!io_decoder.stopped());
 
    //// spdlog::debug("swAsrIsServerRunning check: {}", isRunning);
-    return isRunning ? 1 : 0;
+    return isRunning.load() ? 1 : 0;
 }
 
 #ifdef __cplusplus

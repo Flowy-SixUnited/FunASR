@@ -110,6 +110,7 @@ void WebSocketServer::do_decoder(
     bool itn,
     int audio_fs,
     std::string wav_format,
+    FUNASR_HANDLE& tpass_handle,
     FUNASR_HANDLE& tpass_online_handle,
     FUNASR_DEC_HANDLE& decoder_handle,
     std::string svs_lang,
@@ -256,8 +257,15 @@ void WebSocketServer::on_open(websocketpp::connection_hdl hdl) {
     data_msg->msg["is_eof"]=false; // if this connection is closed
     data_msg->msg["svs_lang"]="auto";
     data_msg->msg["svs_itn"]=true;
+    
+    data_msg->tpass_handle = FunTpassInit(model_path_, thread_num_);
+    if (!data_msg->tpass_handle) {
+      LOG(ERROR) << "FunTpassInit init failed for connection";
+      return;
+    }
+    
     FUNASR_DEC_HANDLE decoder_handle =
-      FunASRWfstDecoderInit(tpass_handle, ASR_TWO_PASS, global_beam_, lattice_beam_, am_scale_);
+      FunASRWfstDecoderInit(data_msg->tpass_handle, ASR_TWO_PASS, global_beam_, lattice_beam_, am_scale_);
     data_msg->decoder_handle = decoder_handle;
     data_msg->punc_cache =
         std::make_shared<std::vector<std::vector<std::string>>>(2);
@@ -290,6 +298,8 @@ void remove_hdl(
     data_msg->decoder_handle = nullptr;
     FunTpassOnlineUninit(data_msg->tpass_online_handle);
     data_msg->tpass_online_handle = nullptr;
+    FunTpassUninit(data_msg->tpass_handle);
+    data_msg->tpass_handle = nullptr;
 	  data_map.erase(hdl);
   }
  
@@ -455,7 +465,7 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
         FunWfstDecoderLoadHwsRes(msg_data->decoder_handle, fst_inc_wts_, merged_hws_map);
 
         // nn
-        std::vector<std::vector<float>> new_hotwords_embedding = CompileHotwordEmbedding(tpass_handle, nn_hotwords, ASR_TWO_PASS);
+        std::vector<std::vector<float>> new_hotwords_embedding = CompileHotwordEmbedding(msg_data->tpass_handle, nn_hotwords, ASR_TWO_PASS);
         msg_data->hotwords_embedding =
             std::make_shared<std::vector<std::vector<float>>>(new_hotwords_embedding);
       }
@@ -470,7 +480,7 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
           // check chunk_size_vec
           if(chunk_size_vec.size() == 3 && chunk_size_vec[1] != 0){
             FUNASR_HANDLE tpass_online_handle =
-                FunTpassOnlineInit(tpass_handle, chunk_size_vec);
+                FunTpassOnlineInit(msg_data->tpass_handle, chunk_size_vec);
             msg_data->tpass_online_handle = tpass_online_handle;
           }else{
             LOG(ERROR) << "Wrong chunk_size!";
@@ -510,6 +520,7 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
                         msg_data->msg["itn"],
                         msg_data->msg["audio_fs"],
                         msg_data->msg["wav_format"],
+                        std::ref(msg_data->tpass_handle),
                         std::ref(msg_data->tpass_online_handle),
                         std::ref(msg_data->decoder_handle),
                         msg_data->msg["svs_lang"],
@@ -560,6 +571,7 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
                                   msg_data->msg["itn"],
                                   msg_data->msg["audio_fs"],
                                   msg_data->msg["wav_format"],
+                                  std::ref(msg_data->tpass_handle),
                                   std::ref(msg_data->tpass_online_handle),
                                   std::ref(msg_data->decoder_handle),
                                   msg_data->msg["svs_lang"],
@@ -588,11 +600,10 @@ void WebSocketServer::on_message(websocketpp::connection_hdl hdl,
 void WebSocketServer::initAsr(std::map<std::string, std::string>& model_path,
                               int thread_num) {
   try {
-    tpass_handle = FunTpassInit(model_path, thread_num);
-    if (!tpass_handle) {
-      LOG(ERROR) << "FunTpassInit init failed";
-      exit(-1);
-    }
+    // 保存模型路径和线程数，用于为每个连接创建独立的handle
+    model_path_ = model_path;
+    thread_num_ = thread_num;
+    
     LOG(INFO) << "initAsr run check_and_clean_connection";
     std::thread clean_thread(&WebSocketServer::check_and_clean_connection,this);  
     clean_thread.detach();
